@@ -1,0 +1,1 @@
+﻿Explay client for Jellyfin, the free software media system

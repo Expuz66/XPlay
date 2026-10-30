@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/.kotlin
+/local.properties
+/.idea
+.DS_Store
+build
+/captures
+.externalNativeBuild
+.cxx
+
+# Local release-signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
+keystore.properties
+
+# Build and release outputs
+*.apk
+*.aab
+*.apks
+*.log
+/app/proprietary/
+
+# Local signing notes and machine-specific material
+/KeySign/
