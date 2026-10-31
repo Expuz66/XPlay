@@ -36,8 +36,8 @@ Deployment endpoints are supplied at build time. Do not store credentials, API k
 
 ```powershell
 .\gradlew.bat assembleProprietaryDebug `
-  "-Pexpuz.local.endpoint=<LOCAL_ENDPOINT>" `
-  "-Pexpuz.remote.endpoint=<HTTPS_ENDPOINT>"
+  "-Pexpuz.local.endpoint=http://192.168.10.111:8096" `
+  "-Pexpuz.remote.endpoint=https://stream.expuz-server.my.id"
 ```
 
 The resolver probes the configured LAN endpoint first and uses the configured HTTPS endpoint only when the local endpoint is unavailable or invalid.

@@ -120,6 +120,7 @@ class WebViewFragment : Fragment(), BackPressInterceptor, JellyfinWebChromeClien
 
             override fun onAuthenticationErrorReceived() {
                 Timber.w("WebView authentication failure for endpoint url=%s", server.hostname)
+                mainViewModel.markAuthenticationRequired(server.hostname)
                 handleError()
             }
         }
@@ -187,14 +188,29 @@ class WebViewFragment : Fragment(), BackPressInterceptor, JellyfinWebChromeClien
             ConnectionState.LOCAL -> "LOCAL"
             ConnectionState.REMOTE -> "REMOTE"
             ConnectionState.DISCONNECTED -> "OFFLINE"
+            ConnectionState.AUTHENTICATION_REQUIRED -> "AUTHENTICATION REQUIRED"
         }
         val webView = webViewBinding?.webView ?: return
         runOnUiThread {
             if (webViewBinding?.webView === webView && webView.isAttachedToWindow) {
-                webView.evaluateJavascript(
-                    "window.ExpuzConnectionIndicator?.update('$label');",
-                    null,
-                )
+                // The bundle interception callback can run before injectionScript.js has
+                // defined the indicator. Retry briefly so a successful Home load cannot
+                // leave the drawer at its initial CONNECTING value.
+                fun updateWhenInjected(retriesRemaining: Int) {
+                    webView.evaluateJavascript(
+                        "typeof window.ExpuzConnectionIndicator?.update === 'function'",
+                    ) { available ->
+                        if (available == "true") {
+                            webView.evaluateJavascript(
+                                "window.ExpuzConnectionIndicator.update('$label');",
+                                null,
+                            )
+                        } else if (retriesRemaining > 0) {
+                            webView.postDelayed({ updateWhenInjected(retriesRemaining - 1) }, 150L)
+                        }
+                    }
+                }
+                updateWhenInjected(10)
             }
         }
     }

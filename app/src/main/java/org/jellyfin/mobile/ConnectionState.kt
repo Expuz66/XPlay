@@ -5,4 +5,5 @@ enum class ConnectionState {
     LOCAL,
     REMOTE,
     DISCONNECTED,
+    AUTHENTICATION_REQUIRED,
 }

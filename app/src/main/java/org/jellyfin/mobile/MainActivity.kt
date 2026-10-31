@@ -37,6 +37,9 @@ import org.jellyfin.mobile.utils.extensions.replaceFragment
 import org.jellyfin.mobile.utils.isWebViewSupported
 import org.jellyfin.mobile.webapp.RemotePlayerService
 import org.jellyfin.mobile.webapp.WebViewFragment
+import org.jellyfin.mobile.update.UpdateDialogFragment
+import org.jellyfin.mobile.update.UpdateManager
+import org.jellyfin.mobile.update.UpdateState
 import org.koin.android.ext.android.get
 import org.koin.android.ext.android.inject
 import org.koin.androidx.fragment.android.setupKoinFragmentFactory
@@ -48,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     val bluetoothPermissionHelper: BluetoothPermissionHelper = BluetoothPermissionHelper(this, get())
     val chromecast: IChromecast = Chromecast()
     private val permissionRequestHelper: PermissionRequestHelper by inject()
+    private val updateManager: UpdateManager by inject()
 
     var serviceBinder: RemotePlayerService.ServiceBinder? = null
         private set
@@ -104,6 +108,15 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        lifecycleScope.launch {
+            updateManager.state.collectLatest { state ->
+                if (state is UpdateState.Available && supportFragmentManager.findFragmentByTag(UPDATE_DIALOG_TAG) == null) {
+                    UpdateDialogFragment().show(supportFragmentManager, UPDATE_DIALOG_TAG)
+                }
+            }
+        }
+        updateManager.checkForUpdates()
+
         // Check WebView support
         if (!isWebViewSupported()) {
             AlertDialog.Builder(this).apply {
@@ -158,6 +171,10 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         orientationListener.enable()
+        lifecycleScope.launch {
+            mainViewModel.refreshConnection()
+        }
+        updateManager.resumeInstallIfAllowed(this)
     }
 
     private fun handleServerState(state: ServerState) {
@@ -222,5 +239,9 @@ class MainActivity : AppCompatActivity() {
         unbindService(serviceConnection)
         chromecast.destroy()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val UPDATE_DIALOG_TAG = "xplay_update_dialog"
     }
 }

@@ -1,6 +1,6 @@
 (() => {
     let currentState = 'CONNECTING';
-    const states = new Set(['LOCAL', 'REMOTE', 'CONNECTING', 'OFFLINE']);
+    const states = new Set(['LOCAL', 'REMOTE', 'CONNECTING', 'OFFLINE', 'AUTHENTICATION REQUIRED']);
 
     function drawerRoot() {
         return document.querySelector('#mainDrawer, .mainDrawer, .navDrawer, [data-testid="navigation-drawer"]');

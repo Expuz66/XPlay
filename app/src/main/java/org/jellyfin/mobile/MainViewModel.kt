@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -33,15 +34,23 @@ class MainViewModel(
     private val switchMutex = Mutex()
     private var activeEndpoint: Endpoint? = null
     private var lastAutomaticSwitchAt = 0L
+    private var connectionAttemptId = 0L
+    private var connectionJob: Job? = null
 
     init {
-        viewModelScope.launch {
-            switchMutex.withLock { autoConnect() }
+        startConnectionAttempt()
+    }
+
+    private fun startConnectionAttempt() {
+        connectionJob?.cancel()
+        val attemptId = ++connectionAttemptId
+        connectionJob = viewModelScope.launch {
+            switchMutex.withLock { autoConnect(attemptId) }
         }
     }
 
-    private suspend fun autoConnect() {
-        Timber.i("Startup endpoint selection started")
+    private suspend fun autoConnect(attemptId: Long) {
+        Timber.i("Connection attempt started id=%d", attemptId)
         _connectionState.value = ConnectionState.CONNECTING
         if (endpointResolver.configuredEndpoints().isEmpty()) {
             refreshServer()
@@ -57,7 +66,7 @@ class MainViewModel(
         if (endpoint != null) {
             connect(endpoint)
         } else {
-            Timber.w("Startup endpoint selection finished: OFFLINE")
+            Timber.w("Connection attempt finished id=%d result=OFFLINE", attemptId)
             _serverState.value = ServerState.Unset
             _userState.value = UserState.Unset
             _connectionState.value = ConnectionState.DISCONNECTED
@@ -65,12 +74,14 @@ class MainViewModel(
     }
 
     suspend fun switchServer(hostname: String) {
+        val attemptId = ++connectionAttemptId
         apiClientController.setupServer(hostname)
         activeEndpoint = endpointResolver.configuredEndpoints().firstOrNull { it.url == hostname.trimEnd('/') }
         _connectionState.value = activeEndpoint?.let { if (it.isLocal) ConnectionState.LOCAL else ConnectionState.REMOTE }
             ?: ConnectionState.REMOTE
         refreshUser()
         refreshServer()
+        Timber.i("Connection attempt finished id=%d result=%s", attemptId, activeEndpoint?.let { if (it.isLocal) "LOCAL" else "REMOTE" } ?: "REMOTE")
     }
 
     private suspend fun connect(endpoint: Endpoint) {
@@ -84,7 +95,33 @@ class MainViewModel(
         refreshServer()
     }
 
-    suspend fun retryConnection() = switchMutex.withLock { autoConnect() }
+    suspend fun retryConnection() = switchMutex.withLock {
+        val attemptId = ++connectionAttemptId
+        autoConnect(attemptId)
+    }
+
+    /** Rechecks the preferred endpoint after the app returns to the foreground. */
+    suspend fun refreshConnection() = switchMutex.withLock {
+        if (activeEndpoint == null) return@withLock
+        val attemptId = ++connectionAttemptId
+        Timber.i("Foreground connectivity check started id=%d", attemptId)
+        val selected = endpointResolver.select()
+        when {
+            selected == null -> {
+                _connectionState.value = ConnectionState.DISCONNECTED
+                Timber.w("Foreground connectivity check finished id=%d result=OFFLINE", attemptId)
+            }
+            selected.url != activeEndpoint?.url -> {
+                _connectionState.value = ConnectionState.CONNECTING
+                connect(selected)
+                Timber.i("Foreground connectivity check finished id=%d result=%s", attemptId, if (selected.isLocal) "LOCAL" else "REMOTE")
+            }
+            else -> {
+                _connectionState.value = if (selected.isLocal) ConnectionState.LOCAL else ConnectionState.REMOTE
+                Timber.i("Foreground connectivity check finished id=%d result=UNCHANGED", attemptId)
+            }
+        }
+    }
 
     suspend fun switchToAlternateEndpoint(): Boolean = switchMutex.withLock {
         Timber.i("Endpoint fallback requested; active=%s", activeEndpoint?.url ?: "none")
@@ -92,9 +129,17 @@ class MainViewModel(
         val current = activeEndpoint ?: return false
         val alternate = endpointResolver.alternate(current.url) ?: return false
         lastAutomaticSwitchAt = System.currentTimeMillis()
+        val attemptId = ++connectionAttemptId
         connect(alternate)
-        Timber.i("Endpoint fallback completed: %s", if (alternate.isLocal) "LOCAL" else "REMOTE")
+        Timber.i("Connection attempt finished id=%d result=%s", attemptId, if (alternate.isLocal) "LOCAL" else "REMOTE")
         true
+    }
+
+    fun markAuthenticationRequired(hostname: String) {
+        if (activeEndpoint?.url == hostname.trimEnd('/')) {
+            _connectionState.value = ConnectionState.AUTHENTICATION_REQUIRED
+            Timber.i("Connection state changed result=AUTHENTICATION_REQUIRED")
+        }
     }
 
     suspend fun setupUser(serverId: Long, userId: UUID, accessToken: String) {

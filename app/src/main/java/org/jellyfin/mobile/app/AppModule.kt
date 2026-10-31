@@ -50,6 +50,7 @@ import org.jellyfin.mobile.utils.isLowRamDevice
 import org.jellyfin.mobile.webapp.RemoteVolumeProvider
 import org.jellyfin.mobile.webapp.WebViewFragment
 import org.jellyfin.mobile.webapp.WebappFunctionChannel
+import org.jellyfin.mobile.update.UpdateManager
 import org.jellyfin.sdk.api.client.ApiClient
 import org.jellyfin.sdk.api.client.util.AuthorizationHeaderBuilder
 import org.koin.android.ext.koin.androidApplication
@@ -67,6 +68,7 @@ val applicationModule = module {
     single { OkHttpClient() }
     single { ImageLoader(androidApplication()) }
     single { PermissionRequestHelper() }
+    single { UpdateManager(androidApplication()) }
     single { RemoteVolumeProvider(get()) }
     single(named(PLAYER_EVENT_CHANNEL)) { Channel<PlayerEvent>() }
     factory { WorkManager.getInstance(get()) }

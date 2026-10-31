@@ -1,6 +1,8 @@
 package org.jellyfin.mobile.app
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URI
@@ -18,29 +20,34 @@ class HttpEndpointProbe(
     private val timeoutMs: Int = 1500,
 ) : EndpointProbe {
     override suspend fun isHealthy(endpoint: Endpoint): Boolean = withContext(Dispatchers.IO) {
-        Timber.i("Endpoint probe starting %s url=%s", endpoint.label(), endpoint.url)
-        val connection = (URL(URI(endpoint.url.trimEnd('/') + "/System/Info/Public").toString()).openConnection() as HttpURLConnection)
-        try {
-            connection.connectTimeout = timeoutMs
-            connection.readTimeout = timeoutMs
-            connection.requestMethod = "GET"
-            connection.instanceFollowRedirects = false
-            val response = connection.responseCode
-            val validResponse = response in 200..299 && connection.inputStream.bufferedReader().use { body ->
-                val text = body.readText()
-                "ProductName" in text || "ServerName" in text
+        withTimeout(timeoutMs.toLong()) {
+            Timber.i("Endpoint probe started endpoint=%s", endpoint.label())
+            val connection = (URL(URI(endpoint.url.trimEnd('/') + "/System/Info/Public").toString()).openConnection() as HttpURLConnection)
+            try {
+                connection.connectTimeout = timeoutMs
+                connection.readTimeout = timeoutMs
+                connection.requestMethod = "GET"
+                connection.instanceFollowRedirects = false
+                Timber.d("Endpoint probe HTTP request started endpoint=%s", endpoint.label())
+                val response = connection.responseCode
+                val validResponse = response in 200..299 && connection.inputStream.bufferedReader().use { body ->
+                    val text = body.readText()
+                    "ProductName" in text || "ServerName" in text
+                }
+                Timber.i("Endpoint probe finished endpoint=%s http=%d jellyfin=%s", endpoint.label(), response, validResponse)
+                validResponse
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (exception: Exception) {
+                Timber.i(
+                    "Endpoint probe failed endpoint=%s reason=%s",
+                    endpoint.label(),
+                    exception::class.simpleName,
+                )
+                false
+            } finally {
+                connection.disconnect()
             }
-            Timber.i("Endpoint probe %s returned HTTP %d; validJellyfin=%s", endpoint.label(), response, validResponse)
-            validResponse
-        } catch (exception: Exception) {
-            Timber.i(
-                "Endpoint probe %s failed: %s",
-                endpoint.label(),
-                exception.message?.take(160) ?: exception::class.simpleName,
-            )
-            false
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -52,14 +59,14 @@ class EndpointResolver(
     private val remoteEndpoint: String,
 ) {
     suspend fun select(): Endpoint? {
-        Timber.i("Endpoint selection started; order=LOCAL then REMOTE")
+        Timber.i("Endpoint selection started order=LOCAL_then_REMOTE")
         configuredEndpoints().forEach { endpoint ->
             if (probe.isHealthy(endpoint)) {
                 Timber.i("Selected %s endpoint", endpoint.label())
                 return endpoint
             }
         }
-        Timber.w("No configured Jellyfin endpoint is healthy")
+        Timber.w("Endpoint selection finished result=OFFLINE")
         return null
     }
 
