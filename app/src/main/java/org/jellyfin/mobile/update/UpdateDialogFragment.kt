@@ -39,7 +39,7 @@ class UpdateDialogFragment : DialogFragment() {
             setContentView(ComposeView(context).apply {
                 setContent {
                     val state by updateManager.state.collectAsState()
-                    UpdateContent(state, updateManager, requireContext())
+                    UpdateContent(state, updateManager, requireContext()) { dismiss() }
                 }
             })
         }
@@ -52,11 +52,17 @@ class UpdateDialogFragment : DialogFragment() {
 }
 
 @androidx.compose.runtime.Composable
-private fun UpdateContent(state: UpdateState, manager: UpdateManager, context: android.content.Context) {
+private fun UpdateContent(
+    state: UpdateState,
+    manager: UpdateManager,
+    context: android.content.Context,
+    onLater: () -> Unit,
+) {
     val release = when (state) {
         is UpdateState.Available -> state.release
         is UpdateState.Downloading -> state.release
         is UpdateState.Ready -> state.release
+        is UpdateState.Failed -> state.release
         UpdateState.Idle -> return
     }
     Surface(color = Color(0xFF171B24), shape = MaterialTheme.shapes.medium) {
@@ -74,7 +80,7 @@ private fun UpdateContent(state: UpdateState, manager: UpdateManager, context: a
             Divider(color = Color(0xFF353B49))
             if (release.notes.isNotBlank()) {
                 Text("What's new", color = Color.White, fontWeight = FontWeight.Bold)
-                Text(release.notes, color = Color(0xFFD3D7E0), maxLines = 8, modifier = Modifier.verticalScroll(rememberScrollState()))
+                Text(release.notes, color = Color(0xFFD3D7E0), maxLines = 8)
             }
             when (state) {
                 is UpdateState.Downloading -> {
@@ -84,8 +90,22 @@ private fun UpdateContent(state: UpdateState, manager: UpdateManager, context: a
                     Button(onClick = manager::cancelDownload, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF303746))) { Text("Cancel") }
                 }
                 is UpdateState.Ready -> {
-                    Text("Download complete", color = Color(0xFF9FE3B1))
-                    Button(onClick = { manager.install(context, state.apk) }, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3976D8))) { Text("Install") }
+                    Text("Download Complete", color = Color(0xFF9FE3B1), fontWeight = FontWeight.Bold)
+                    Text(state.apk.name, color = Color(0xFFD3D7E0), maxLines = 2)
+                    Row {
+                        Button(onClick = { manager.install(context, state.apk) }, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3976D8))) { Text("Install Now") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = onLater, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF303746))) { Text("Later") }
+                    }
+                }
+                is UpdateState.Failed -> {
+                    Text("Update could not be prepared", color = Color(0xFFFFB4AB), fontWeight = FontWeight.Bold)
+                    Text(state.message, color = Color(0xFFD3D7E0), maxLines = 3)
+                    Row {
+                        Button(onClick = { manager.retryDownload(release) }, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF3976D8))) { Text("Retry") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = onLater, colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF303746))) { Text("Later") }
+                    }
                 }
                 is UpdateState.Available -> {
                     Row {

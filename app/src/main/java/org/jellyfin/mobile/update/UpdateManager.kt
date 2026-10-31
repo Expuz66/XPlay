@@ -1,6 +1,7 @@
 package org.jellyfin.mobile.update
 
 import android.content.Context
+import android.content.ClipData
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -31,6 +32,7 @@ sealed interface UpdateState {
     data class Available(val release: UpdateRelease) : UpdateState
     data class Downloading(val release: UpdateRelease, val downloaded: Long, val total: Long) : UpdateState
     data class Ready(val release: UpdateRelease, val apk: File) : UpdateState
+    data class Failed(val release: UpdateRelease, val message: String) : UpdateState
 }
 
 data class UpdateRelease(
@@ -74,6 +76,7 @@ class UpdateManager(
     private var checkedThisProcess = false
     private var dismissedTag: String? = null
     private var pendingInstall: File? = null
+    private var downloadJob: Job? = null
 
     fun checkForUpdates() {
         if (checkedThisProcess || checkJob?.isActive == true) return
@@ -97,8 +100,8 @@ class UpdateManager(
     }
 
     fun download(release: UpdateRelease) {
-        if (_state.value is UpdateState.Downloading) return
-        scope.launch {
+        if (downloadJob?.isActive == true) return
+        downloadJob = scope.launch {
             try {
                 require(isTrustedAssetUrl(release.assetUrl))
                 val directory = File(context.filesDir, "updates").apply { mkdirs() }
@@ -112,36 +115,54 @@ class UpdateManager(
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                val reason = error.message?.takeIf { it.isNotBlank() } ?: error::class.simpleName ?: "Unknown error"
                 Timber.w("GitHub update download rejected reason=%s", error::class.simpleName)
-                _state.value = UpdateState.Available(release)
+                _state.value = UpdateState.Failed(release, reason)
             }
         }
     }
 
     fun cancelDownload() {
-        scope.coroutineContext[Job]?.children?.forEach { child ->
-            if (child != checkJob) child.cancel()
-        }
+        downloadJob?.cancel()
+        downloadJob = null
         (_state.value as? UpdateState.Downloading)?.let { _state.value = UpdateState.Available(it.release) }
+    }
+
+    fun retryDownload(release: UpdateRelease) {
+        _state.value = UpdateState.Available(release)
+        download(release)
     }
 
     fun install(context: Context, apk: File) {
         if (!apk.exists()) return
-        pendingInstall = apk
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
-            context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                data = Uri.parse("package:${context.packageName}")
-            })
-            return
+        val release = (_state.value as? UpdateState.Ready)?.release ?: return
+        try {
+            pendingInstall = apk
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !context.packageManager.canRequestPackageInstalls()) {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = Uri.parse("package:${context.packageName}")
+                })
+                return
+            }
+            pendingInstall = null
+            launchInstaller(context, apk)
+        } catch (error: Exception) {
+            pendingInstall = null
+            _state.value = UpdateState.Failed(release, error.message ?: "Unable to open Android installer")
         }
-        launchInstaller(context, apk)
     }
 
     fun resumeInstallIfAllowed(context: Context) {
         val apk = pendingInstall ?: return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || context.packageManager.canRequestPackageInstalls()) {
             pendingInstall = null
-            launchInstaller(context, apk)
+            val release = (_state.value as? UpdateState.Ready)?.release
+            if (release == null) return
+            try {
+                launchInstaller(context, apk)
+            } catch (error: Exception) {
+                _state.value = UpdateState.Failed(release, error.message ?: "Unable to open Android installer")
+            }
         }
     }
 
@@ -226,7 +247,9 @@ class UpdateManager(
             file.absolutePath,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES,
         ) ?: error("Invalid APK")
-        require(packageInfo.packageName == context.packageName) { "APK package mismatch" }
+        require(packageInfo.packageName == context.packageName) {
+            "APK package is ${packageInfo.packageName}; expected ${context.packageName}"
+        }
         val downloadedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             packageInfo.signingInfo?.apkContentsSigners.orEmpty()
         } else {
@@ -236,6 +259,11 @@ class UpdateManager(
             context.packageName,
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES,
         )
+        val downloadedVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) packageInfo.longVersionCode else packageInfo.versionCode.toLong()
+        val installedVersionCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) installedInfo.longVersionCode else installedInfo.versionCode.toLong()
+        require(downloadedVersionCode > installedVersionCode) {
+            "APK version $downloadedVersionCode is not newer than installed version $installedVersionCode"
+        }
         val installedSignatures = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             installedInfo.signingInfo?.apkContentsSigners.orEmpty()
         } else {
@@ -252,6 +280,7 @@ class UpdateManager(
         context.startActivity(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            clipData = ClipData.newRawUri("XPlay update", uri)
         })
     }
 

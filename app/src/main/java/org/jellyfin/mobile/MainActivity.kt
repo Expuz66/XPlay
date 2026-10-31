@@ -19,6 +19,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.withStarted
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -44,6 +46,7 @@ import org.koin.android.ext.android.get
 import org.koin.android.ext.android.inject
 import org.koin.androidx.fragment.android.setupKoinFragmentFactory
 import org.koin.androidx.viewmodel.ext.android.viewModel
+import timber.log.Timber
 
 class MainActivity : AppCompatActivity() {
     private val activityEventHandler: ActivityEventHandler = get()
@@ -109,9 +112,15 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         lifecycleScope.launch {
-            updateManager.state.collectLatest { state ->
-                if (state is UpdateState.Available && supportFragmentManager.findFragmentByTag(UPDATE_DIALOG_TAG) == null) {
-                    UpdateDialogFragment().show(supportFragmentManager, UPDATE_DIALOG_TAG)
+            lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                updateManager.state.collectLatest { state ->
+                    if (state is UpdateState.Available && !isFinishing && !isDestroyed && !supportFragmentManager.isStateSaved && supportFragmentManager.findFragmentByTag(UPDATE_DIALOG_TAG) == null) {
+                        runCatching {
+                            UpdateDialogFragment().show(supportFragmentManager, UPDATE_DIALOG_TAG)
+                        }.onFailure { error ->
+                            Timber.w(error, "Update dialog could not be shown")
+                        }
+                    }
                 }
             }
         }
