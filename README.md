@@ -4,7 +4,7 @@ XPlay is a branded Android client for Jellyfin. It combines the Jellyfin web int
 
 ## Version
 
-- Release: **1.0.0**
+- Release: **1.0.1**
 - Application ID: `com.expuz.explay`
 - Proprietary debug application ID: `com.expuz.explay.debug`
 - Android namespace: `org.jellyfin.mobile`
@@ -63,7 +63,7 @@ Command-line debug build:
 Install a verified debug APK with Android Debug Bridge:
 
 ```powershell
-adb install -r app/build/outputs/apk/proprietary/debug/explay-v1.0.0-proprietary-debug.apk
+adb install -r app/build/outputs/apk/proprietary/debug/explay-v1.0.1-proprietary-debug.apk
 ```
 
 Do not uninstall an existing installation when testing unless its data migration impact is understood.
